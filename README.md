@@ -293,19 +293,24 @@ connection to server at "172.18.0.1", port 5432 failed: Connection refused
 
 **Root cause:** PostgreSQL is configured to listen on `172.18.0.1` (the Docker bridge IP), but that interface only exists after Docker creates the `odoo-network` bridge. Since PostgreSQL starts before Docker on boot, it fails to bind that IP and only listens on `localhost`.
 
-**Fix — make PostgreSQL start after Docker using a systemd drop-in:**
+**Fix — wait for the Docker bridge IP to appear before PostgreSQL starts:**
+
+> On Ubuntu/Debian, `postgresql.service` is just a meta wrapper. The actual cluster runs as `postgresql@17-main.service`. The drop-in must go in `postgresql@.service.d` (with `@`) to apply to the real instance.
 
 **1. Create the drop-in file:**
 
 ```bash
-sudo mkdir -p /etc/systemd/system/postgresql.service.d
-sudo nano /etc/systemd/system/postgresql.service.d/after-docker.conf
+sudo mkdir -p /etc/systemd/system/postgresql@.service.d
+sudo nano /etc/systemd/system/postgresql@.service.d/wait-docker-bridge.conf
 ```
 
 ```ini
 [Unit]
 After=docker.service
 Wants=docker.service
+
+[Service]
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ip addr | grep -q 172.18.0.1 && break; sleep 1; done'
 ```
 
 **2. Reload systemd:**
@@ -314,6 +319,4 @@ Wants=docker.service
 sudo systemctl daemon-reload
 ```
 
-Boot order after this fix: Docker starts (bridge interfaces including `172.18.0.1` come up) → PostgreSQL starts and binds correctly.
-
-> **Why not use a cron `@reboot` workaround?** `@reboot` with `sleep` delays is unreliable — the correct sleep value depends on machine speed and can still fail under load. systemd's `After=` guarantees correct ordering without timing guesses.
+> `ExecStartPre` polls for `172.18.0.1` every second for up to 30 seconds before allowing PostgreSQL to start.
