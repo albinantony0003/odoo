@@ -69,7 +69,7 @@ listen_addresses = 'localhost,172.18.0.1'
 
 > Avoids exposing PostgreSQL on public interfaces. `172.18.0.1` is the `odoo-network` gateway.
 
-> **Reboot issue:** After a machine restart, PostgreSQL may fail to bind `172.18.0.1` because the Docker bridge doesn't exist yet when PostgreSQL starts. Fix this by ensuring the Docker network is created before PostgreSQL starts using systemd ordering (see [Fix PostgreSQL connection after reboot](#fix-postgresql-connection-after-reboot) below).
+> **Reboot issue:** After a machine restart, PostgreSQL may fail to bind `172.18.0.1` because the Docker bridge doesn't exist yet when PostgreSQL starts. Fix this by making PostgreSQL start after Docker using systemd ordering (see [Fix PostgreSQL connection after reboot](#fix-postgresql-connection-after-reboot) below).
 
 **3. Restart PostgreSQL:**
 
@@ -293,50 +293,27 @@ connection to server at "172.18.0.1", port 5432 failed: Connection refused
 
 **Root cause:** PostgreSQL is configured to listen on `172.18.0.1` (the Docker bridge IP), but that interface only exists after Docker creates the `odoo-network` bridge. Since PostgreSQL starts before Docker on boot, it fails to bind that IP and only listens on `localhost`.
 
-**Fix — use systemd to ensure the Docker network exists before PostgreSQL starts:**
+**Fix — make PostgreSQL start after Docker using a systemd drop-in:**
 
-**1. Create a service that creates the Docker network at boot:**
-
-```bash
-sudo nano /etc/systemd/system/odoo-network.service
-```
-
-```ini
-[Unit]
-Description=Create odoo Docker bridge network
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/docker network create odoo-network
-ExecStart=/bin/true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**2. Make PostgreSQL start after the network is ready:**
+**1. Create the drop-in file:**
 
 ```bash
 sudo mkdir -p /etc/systemd/system/postgresql.service.d
-sudo nano /etc/systemd/system/postgresql.service.d/after-odoo-network.conf
+sudo nano /etc/systemd/system/postgresql.service.d/after-docker.conf
 ```
 
 ```ini
 [Unit]
-After=odoo-network.service
-Wants=odoo-network.service
+After=docker.service
+Wants=docker.service
 ```
 
-**3. Enable and reload:**
+**2. Reload systemd:**
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable odoo-network.service
 ```
 
-Boot order after this fix: Docker → `odoo-network` bridge created (`172.18.0.1` up) → PostgreSQL starts and binds correctly.
+Boot order after this fix: Docker starts (bridge interfaces including `172.18.0.1` come up) → PostgreSQL starts and binds correctly.
 
-> **Why not use a cron `@reboot` workaround?** `@reboot` with `sleep` delays is unreliable — the correct sleep value depends on machine speed and can still fail under load. systemd's `After=` + `Wants=` guarantees correct ordering without timing guesses.
+> **Why not use a cron `@reboot` workaround?** `@reboot` with `sleep` delays is unreliable — the correct sleep value depends on machine speed and can still fail under load. systemd's `After=` guarantees correct ordering without timing guesses.
