@@ -1,0 +1,26 @@
+services:
+    odoo:
+        container_name: erp18
+        build:
+            context: .
+            dockerfile: Dockerfile
+        restart: always
+        volumes:
+            - ./config:/etc/odoo
+            - ./custom-addons:/mnt/custom-addons
+            - ./extra-addons:/mnt/extra-addons
+            - ./odoo-data:/root/.local/share/Odoo
+        ports:
+            - "8059:8069"
+            - "8062:8072"
+        environment:
+            - HOST=172.18.0.1
+            - PORT=5432
+            - USER=erp18
+            - PASSWORD=kkHOzy0T7hfl
+        networks:
+           - odoo-network
+
+networks:
+      odoo-network:
+        external: true
