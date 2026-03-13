@@ -1,4 +1,4 @@
-# Odoo 12 Docker Setup
+# Odoo  Docker Setup
 
 This project runs Odoo 12 behind Nginx Proxy Manager using Docker, with PostgreSQL installed directly on the host machine.
 
