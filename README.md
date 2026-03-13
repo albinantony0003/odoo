@@ -126,26 +126,34 @@ max_cron_threads = 1
 
 ## Getting Started
 
-**Step 1 — Create the Docker network** (once only):
+**Step 1 — Create a system user for Odoo:**
+
+```bash
+useradd -m -d /home/username -U -r -s /bin/bash username
+```
+
+> Replace `username` with your desired user (e.g. `odoo`). The `-r` flag creates a system account, `-U` creates a matching group.
+
+**Step 2 — Create the Docker network** (once only):
 
 ```bash
 docker network create odoo-network
 ```
 
-**Step 2 — Build and start Odoo:**
+**Step 3 — Build and start Odoo:**
 
 ```bash
 docker-compose up -d --build
 ```
 
-**Step 3 — Start Nginx Proxy Manager:**
+**Step 4 — Start Nginx Proxy Manager:**
 
 ```bash
 cd nginx
 docker-compose up -d
 ```
 
-**Step 4 — Configure NPM to route traffic to Odoo:**
+**Step 5 — Configure NPM to route traffic to Odoo:**
 
 **4.1 — First login**
 
