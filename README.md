@@ -266,6 +266,8 @@ proxy_set_header    Connection  "upgrade";
 
 > **Without `workers`:** Odoo handles WebSocket on port `8069` (threaded mode). Do **not** add Location 3 — Location 1 (`/` → `8069`) already includes WebSocket upgrade headers and will handle `/websocket` correctly. Adding Location 3 when workers are disabled will cause a "Real-time connection lost" error because nothing is listening on `8072`.
 
+> We can check the workers status by running `docker exec erp18 ps aux | grep odoo`.
+
 **WebSocket configuration matrix:**
 
 | `workers` in odoo.conf | Location 3 in NPM | Result |
