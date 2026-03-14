@@ -107,15 +107,20 @@ sudo -u postgres psql -c "CREATE USER odoo12 WITH PASSWORD 'C8WNhJ4reXm' CREATED
 | `db_password` | *(set in file)* | PostgreSQL password |
 | `xmlrpc_port` | `8069` | Odoo HTTP port |
 | `proxy_mode` | `True` | **Required** when behind a reverse proxy — trusts `X-Forwarded-*` headers |
+| `workers` | `2` | Enables multi-process mode and activates the `/websocket` endpoint for real-time features |
+| `max_cron_threads` | `1` | Number of threads dedicated to scheduled actions |
 
 > `proxy_mode = True` must be set when using NPM/nginx, otherwise Odoo will not correctly detect HTTPS and generate broken URLs.
 
-To enable multithreading (activates `/websocket` location), add to `odoo.conf`:
+> `workers` must be set for real-time features (Discuss, live chat) to work. Without it, Odoo runs in single-threaded mode and the `/websocket` route is unavailable, causing a "Real-time connection lost" error.
 
-```ini
-workers = 2
-max_cron_threads = 1
+**Verify workers are running:**
+
+```bash
+docker exec erp18 ps aux | grep odoo
 ```
+
+You should see multiple `odoo` worker processes. If you only see one, the workers setting is not taking effect — check the config is mounted correctly and restart the container.
 
 ### Nginx Proxy Manager (`nginx/docker-compose.yaml`)
 
@@ -241,7 +246,7 @@ expires             864000;
 
 ---
 
-**Location 3 — Websocket (only if workers/multithreading enabled in Odoo)**
+**Location 3 — Websocket (only needed when `workers` is enabled in `odoo.conf`)**
 
 | Field | Value |
 |---|---|
@@ -257,7 +262,18 @@ proxy_set_header    Upgrade     $http_upgrade;
 proxy_set_header    Connection  "upgrade";
 ```
 
-> Port `8072` is the Odoo longpolling port. Make sure it is mapped in `docker-compose.yaml` (`8062:8072`).
+> Port `8072` is the Odoo gevent/longpolling port used in multi-process mode. Make sure it is mapped in `docker-compose.yaml` (`8062:8072`).
+
+> **Without `workers`:** Odoo handles WebSocket on port `8069` (threaded mode). Do **not** add Location 3 — Location 1 (`/` → `8069`) already includes WebSocket upgrade headers and will handle `/websocket` correctly. Adding Location 3 when workers are disabled will cause a "Real-time connection lost" error because nothing is listening on `8072`.
+
+**WebSocket configuration matrix:**
+
+| `workers` in odoo.conf | Location 3 in NPM | Result |
+|---|---|---|
+| No | No | ✅ Works — Location 1 handles `/websocket` on port `8069` |
+| No | Yes | ❌ Broken — routes `/websocket` to `8072`, nothing listening |
+| Yes | No | ❌ Broken — `/websocket` hits `8069`, workers expect `8072` |
+| Yes | Yes | ✅ Works — correctly routes to gevent worker on `8072` |
 
 ---
 
