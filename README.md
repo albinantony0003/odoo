@@ -103,6 +103,8 @@ sudo -u postgres psql -c "CREATE USER odoo12 WITH PASSWORD 'C8WNhJ4reXm' CREATED
 |---|---|---|
 | `addons_path` | `/mnt/extra-addons,/mnt/custom-addons` | Module search paths |
 | `admin_passwd` | *(set in file)* | Master password for database operations |
+| `db_host` | `172.18.0.1` | **Required** — forces TCP connection to host PostgreSQL. Without this, Odoo tries a Unix socket and fails with `No such file or directory` |
+| `db_port` | `5432` | PostgreSQL port |
 | `db_user` | `erp18` | PostgreSQL user |
 | `db_password` | *(set in file)* | PostgreSQL password |
 | `xmlrpc_port` | `8069` | Odoo HTTP port |
@@ -293,6 +295,26 @@ sudo -u postgres psql -c "CREATE USER odoo14 WITH PASSWORD 'newpassword' CREATED
 3. Update its `docker-compose.yaml` — new container name, port mapping, and DB credentials
 4. Run `docker-compose up -d --build` inside that folder
 5. Add a new Proxy Host in NPM pointing to the new container name
+
+## Update an Odoo Module
+
+To update a module (e.g. `web`) without restarting the full container:
+
+```bash
+docker exec -it erp18 odoo -c /etc/odoo/odoo.conf -u web -d <your_database_name> --stop-after-init
+```
+
+Replace `<your_database_name>` with your actual database name. If you don't know it, list databases first:
+
+```bash
+docker exec -it erp18 psql -h 172.18.0.1 -U erp18 -l
+```
+
+After the update completes, restart the container:
+
+```bash
+docker-compose restart
+```
 
 ## Rebuild Odoo Image
 
