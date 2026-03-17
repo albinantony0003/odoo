@@ -11,6 +11,8 @@ This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL 
 │   ├── docker-compose.yaml         # Odoo service
 │   ├── config/
 │   │   └── odoo.conf               # Odoo configuration
+│   ├── script/
+│   │   └── update_modules.sh       # Bulk module updater (docker & on-premise)
 │   ├── custom-addons/              # Custom Odoo modules
 │   ├── extra-addons/               # Extra Odoo modules
 │   └── odoo-data/                  # Persistent Odoo data
@@ -298,22 +300,83 @@ sudo -u postgres psql -c "CREATE USER odoo14 WITH PASSWORD 'newpassword' CREATED
 
 ## Update an Odoo Module
 
-To update a module (e.g. `web`) without restarting the full container:
+### Automated — `update_modules.sh`
+
+Use the provided script to update a module across **all databases** owned by a PostgreSQL user automatically.
+
+**Location:** `odoo/script/update_modules.sh`
+
+**1. Edit the configuration block at the top of the script:**
+
+```bash
+DB_USER="odoo12"                    # PostgreSQL user — databases owned by this user will be updated
+MODULE="ksa_zatca_integration"      # Module name to pass to -u
+DEPLOY_TYPE="onpremise"             # "docker" or "onpremise"
+
+# Docker-specific (only used when DEPLOY_TYPE=docker)
+DOCKER_CONTAINER="erp18"
+DOCKER_CONFIG="/etc/odoo/odoo.conf"
+
+# On-premise (only used when DEPLOY_TYPE=onpremise)
+ONPREMISE_BIN="/usr/bin/odoo12-server"
+ONPREMISE_CONFIG="/etc/default/odoo12-server.conf"
+```
+
+**2. Make the script executable and run it:**
+
+```bash
+chmod +x odoo/script/update_modules.sh
+./odoo/script/update_modules.sh
+```
+
+The script will:
+1. Query PostgreSQL for all databases owned by `DB_USER`
+2. Run the update command for each database one by one
+3. Print a success/failure summary — exits with code `1` if any database failed
+
+**Commands used internally:**
+
+| Deploy type | Command |
+|---|---|
+| `onpremise` | `/usr/bin/odoo12-server -c /etc/default/odoo12-server.conf -u <module> -d <db> --stop-after-init` |
+| `docker` | `docker exec -i <container> odoo -c <config> -u <module> -d <db> --stop-after-init` |
+
+---
+
+### Manual — single database
+
+To update a module on one specific database without the script:
+
+**Docker:**
 
 ```bash
 docker exec -it erp18 odoo -c /etc/odoo/odoo.conf -u web -d <your_database_name> --stop-after-init
 ```
 
-Replace `<your_database_name>` with your actual database name. If you don't know it, list databases first:
+**On-premise:**
 
 ```bash
-docker exec -it erp18 psql -h 172.18.0.1 -U erp18 -l
+/usr/bin/odoo12-server -c /etc/default/odoo12-server.conf -u ksa_zatca_integration -d <your_database_name> --stop-after-init
 ```
 
-After the update completes, restart the container:
+If you don't know the database name, list databases first:
 
 ```bash
+# Docker
+docker exec -it erp18 psql -h 172.18.0.1 -U erp18 -l
+
+# On-premise
+psql -U odoo12 -l
+```
+
+After the update completes, restart the service:
+
+```bash
+# Docker
 docker-compose restart
+
+# On-premise
+sudo systemctl restart odoo12-server
 ```
 
 ## Rebuild Odoo Image
