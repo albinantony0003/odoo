@@ -99,6 +99,19 @@ ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit
 
 ---
 
+### Dry-run mode (`--check`)
+
+Both playbooks support Ansible's `--check` flag for a dry-run that shows what would change without applying anything. Append `--check` to any run command:
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit tech \
+  -e "odoo_version=18 odoo_port=8060 odoo_gevent_port=8073 postgres_password=secret" --check
+```
+
+> **Note:** The tasks that query PostgreSQL for config file paths (`SHOW config_file`, `SHOW hba_file`) are marked `check_mode: no` so they always run for real even during a dry-run. This is intentional — they are read-only queries and their output is needed for subsequent tasks to resolve the correct `pg_hba.conf` path. Without this, `--check` would skip those tasks, leave the path empty, and fail on the `lineinfile` task.
+
+---
+
 ## Network Architecture
 
 ```
