@@ -1,93 +1,504 @@
-# omal
+# Odoo Docker Setup
 
+This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL installed directly on the host machine.
 
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Project Structure
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/odoo-projects9403712/omal.git
-git branch -M main
-git push -uf origin main
+.
+├── ansible/
+│   ├── inventory.ini               # Target hosts (gitignored)
+│   ├── odoo-install.yaml           # Full setup playbook (new machine)
+│   └── odoo-add-instance.yaml      # Add extra Odoo instance (existing machine)
+├── odoo/
+│   ├── Dockerfile                  # Odoo image build file
+│   ├── docker-compose.yaml         # Odoo service
+│   ├── config/
+│   │   └── odoo.conf               # Odoo configuration
+│   ├── script/
+│   │   └── update_modules.sh       # Bulk module updater (docker & on-premise)
+│   ├── custom-addons/              # Custom Odoo modules
+│   ├── extra-addons/               # Extra Odoo modules
+│   └── odoo-data/                  # Persistent Odoo data
+└── nginx/
+    └── docker-compose.yaml         # Nginx Proxy Manager service
 ```
 
-## Integrate with your tools
+## Ansible Automation
 
-* [Set up project integrations](https://gitlab.com/odoo-projects9403712/omal/-/settings/integrations)
+Two playbooks handle server provisioning. Both read variables from the inventory or via `--extra-vars` (`-e`).
 
-## Collaborate with your team
+### Inventory file (`ansible/inventory.ini`)
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```ini
+[production]
+tech ansible_host=192.168.1.10 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
 
-## Test and Deploy
+[staging]
+dev ansible_host=192.168.1.20 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
+```
 
-Use the built-in continuous integration in GitLab.
+> `inventory.ini` is gitignored — it contains server IPs and SSH key paths.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+---
 
-***
+### `odoo-install.yaml` — Full setup on a new machine
 
-# Editing this README
+Installs everything from scratch: Docker, PostgreSQL, Docker network, Nginx Proxy Manager, and the first Odoo instance.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+**Run:**
 
-## Suggestions for a good README
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-install.yaml --limit tech
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+**Override defaults with `-e`:**
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-install.yaml --limit tech \
+  -e "odoo_version=17 odoo_port=8069 postgres_password=secret admin_passwd=masterpass"
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+**Key variables:**
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+| Variable | Default | Description |
+|---|---|---|
+| `odoo_version` | `17` | Odoo version — sets container name, image tag, and DB user |
+| `odoo_image_tag` | `latest` | Docker image tag for the custom build |
+| `odoo_port` | `8069` | Host port mapped to Odoo HTTP (8069 inside container) |
+| `odoo_gevent_port` | `8072` | Host port mapped to Odoo gevent/websocket (8072 inside container) |
+| `postgres_password` | `changeme` | Password for the PostgreSQL user |
+| `admin_passwd` | `changeme` | Odoo master password (`admin_passwd` in odoo.conf) |
+| `docker_network_name` | `odoo-network` | Docker network shared by all Odoo instances and NPM |
+| `docker_subnet` | `172.18.0.0/24` | Subnet for the Docker network |
+| `docker_gateway` | `172.18.0.1` | Gateway IP — used by containers to reach host PostgreSQL |
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+---
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+### `odoo-add-instance.yaml` — Add a new Odoo instance to an existing machine
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Skips the base setup (Docker, PostgreSQL install, network, NPM) and only provisions a new Odoo instance. Use this when the machine is already running at least one Odoo instance.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+**Run:**
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit tech \
+  -e "odoo_version=16 odoo_port=8070 odoo_gevent_port=8073 postgres_password=secret"
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+**Key variables** (same as above, all overridable via `-e`):
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+| Variable | Default | Description |
+|---|---|---|
+| `odoo_version` | `16` | New instance version |
+| `odoo_port` | `8070` | Must be different from any existing instance |
+| `odoo_gevent_port` | `8073` | Must be different from any existing instance |
+| `postgres_password` | `changeme` | Password for the new PostgreSQL user |
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+> After the playbook finishes, add a new Proxy Host in NPM pointing to `odoo<version>:8069` through `odoo-network`.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+---
 
-## License
-For open source projects, say how it is licensed.
+## Network Architecture
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```
+Internet
+   │
+   ▼
+Nginx Proxy Manager (nginx-proxy)   :80 / :443
+   │
+   │  [odoo-network]
+   ├──► Odoo instance 1 (odoo12)    :8069
+   └──► Odoo instance 2 (odoo14)    :8069  (future)
+           │
+           │  host-gateway
+           ▼
+   PostgreSQL (host machine)        :5432
+       ├── user: odoo12
+       └── user: odoo14  (future)
+```
+
+Odoo containers connect to the host PostgreSQL via the `odoo-network` gateway IP `172.18.0.1`.
+
+## Why Standalone Host PostgreSQL?
+
+- One PostgreSQL installation serves all Odoo instances
+- Each Odoo instance uses its own PostgreSQL user and databases
+- No extra container overhead — PostgreSQL runs natively for better performance
+- Centralized backups and maintenance
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- PostgreSQL installed on the host machine
+- Host PostgreSQL configured to accept connections from Docker containers
+
+### Configure PostgreSQL on the Host
+
+**1. Allow Docker network connections in `pg_hba.conf`:**
+
+```
+# Allow only the odoo-network subnet
+host    all             odoo12          172.18.0.0/24           md5
+```
+
+**2. Set PostgreSQL to listen on localhost and Docker bridge in `postgresql.conf`:**
+
+```
+listen_addresses = 'localhost,172.18.0.1'
+```
+
+> Avoids exposing PostgreSQL on public interfaces. `172.18.0.1` is the `odoo-network` gateway.
+
+> **Reboot issue:** After a machine restart, PostgreSQL may fail to bind `172.18.0.1` because the Docker bridge doesn't exist yet when PostgreSQL starts. Fix this by making PostgreSQL start after Docker using systemd ordering (see [Fix PostgreSQL connection after reboot](#fix-postgresql-connection-after-reboot) below).
+
+**3. Restart PostgreSQL:**
+
+```bash
+sudo systemctl restart postgresql
+```
+
+**4. Create a user for each Odoo instance:**
+
+```bash
+sudo -u postgres psql -c "CREATE USER odoo12 WITH PASSWORD 'C8WNhJ4reXm' CREATEDB;"
+```
+
+> Repeat with a different username for each new Odoo instance.
+
+## Services
+
+### Odoo (`docker-compose.yaml`)
+
+| Property | Value |
+|---|---|
+| Container | `odoo12` |
+| Build | `./Dockerfile` |
+| DB Host | `172.18.0.1` (`odoo-network` gateway) |
+| DB Port | `5432` |
+| Network | `odoo-network` (external) |
+
+### Odoo Configuration (`odoo/config/odoo.conf`)
+
+| Option | Value | Description |
+|---|---|---|
+| `addons_path` | `/mnt/extra-addons,/mnt/custom-addons` | Module search paths |
+| `admin_passwd` | *(set in file)* | Master password for database operations |
+| `db_host` | `172.18.0.1` | **Required** — forces TCP connection to host PostgreSQL. Without this, Odoo tries a Unix socket and fails with `No such file or directory` |
+| `db_port` | `5432` | PostgreSQL port |
+| `db_user` | `erp18` | PostgreSQL user |
+| `db_password` | *(set in file)* | PostgreSQL password |
+| `xmlrpc_port` | `8069` | Odoo HTTP port |
+| `proxy_mode` | `True` | **Required** when behind a reverse proxy — trusts `X-Forwarded-*` headers |
+| `workers` | `2` | Enables multi-process mode and activates the `/websocket` endpoint for real-time features |
+| `max_cron_threads` | `1` | Number of threads dedicated to scheduled actions |
+
+> `proxy_mode = True` must be set when using NPM/nginx, otherwise Odoo will not correctly detect HTTPS and generate broken URLs.
+
+> `workers` must be set for real-time features (Discuss, live chat) to work. Without it, Odoo runs in single-threaded mode and the `/websocket` route is unavailable, causing a "Real-time connection lost" error.
+
+**Verify workers are running:**
+
+```bash
+docker exec erp18 ps aux | grep odoo
+```
+
+You should see multiple `odoo` worker processes. If you only see one, the workers setting is not taking effect — check the config is mounted correctly and restart the container.
+
+### Nginx Proxy Manager (`nginx/docker-compose.yaml`)
+
+| Property | Value |
+|---|---|
+| Container | `nginx-proxy` |
+| Image | `jc21/nginx-proxy-manager:latest` |
+| Ports | `80` (HTTP), `81` (Admin UI), `443` (HTTPS) |
+| Network | `odoo-network` (external) |
+
+## Getting Started
+
+**Step 1 — Create a system user for Odoo:**
+
+```bash
+useradd -m -d /home/username -U -r -s /bin/bash username
+```
+
+> Replace `username` with your desired user (e.g. `odoo`). The `-r` flag creates a system account, `-U` creates a matching group.
+
+**Step 2 — Create the Docker network** (once only):
+
+```bash
+docker network create odoo-network
+```
+
+**Step 3 — Build and start Odoo:**
+
+```bash
+docker-compose up -d --build
+```
+
+**Step 4 — Start Nginx Proxy Manager:**
+
+```bash
+cd nginx
+docker-compose up -d
+```
+
+**Step 5 — Configure NPM to route traffic to Odoo:**
+
+**4.1 — First login**
+
+1. Open `http://<your-server-ip>:81`
+2. Log in with the default credentials:
+   - Email: `admin@example.com`
+   - Password: `changeme`
+3. You will be prompted to change the email and password — do this immediately
+
+**4.2 — Add a Proxy Host**
+
+1. Go to **Hosts → Proxy Hosts** in the top menu
+2. Click **Add Proxy Host**
+3. Fill in the **Details** tab:
+
+| Field | Value |
+|---|---|
+| Domain Names | `yourdomain.com` |
+| Scheme | `http` |
+| Forward Hostname | `erp18` |
+| Forward Port | `8069` |
+| Cache Assets | Off |
+| Block Common Exploits | On |
+| Websockets Support | **On** |
+
+4. Click the **SSL** tab:
+
+| Field | Value |
+|---|---|
+| SSL Certificate | Request a new SSL Certificate |
+| Force SSL | On |
+| HTTP/2 Support | On |
+| HSTS Enabled | On |
+
+5. Enter your email for Let's Encrypt and accept the terms
+
+**4.3 — Custom Locations**
+
+Click the **Custom Locations** tab and add the following three locations:
+
+---
+
+**Location 1 — Main proxy**
+
+| Field | Value |
+|---|---|
+| Location | `/` |
+| Scheme | `http` |
+| Forward Hostname | `erp18` |
+| Forward Port | `8069` |
+
+Custom config (paste into the text box):
+
+```nginx
+proxy_redirect          off;
+proxy_set_header        X-Forwarded-Host    $host;
+proxy_set_header        X-Real-IP           $remote_addr;
+proxy_set_header        X-Forwarded-For     $proxy_add_x_forwarded_for;
+proxy_set_header        X-Forwarded-Proto   https;
+proxy_http_version      1.1;
+proxy_set_header        Upgrade             $http_upgrade;
+proxy_set_header        Connection          "upgrade";
+```
+
+---
+
+**Location 2 — Static file caching**
+
+| Field | Value |
+|---|---|
+| Location | `~* /web/static/` |
+| Scheme | `http` |
+| Forward Hostname | `erp18` |
+| Forward Port | `8069` |
+
+Custom config:
+
+```nginx
+proxy_cache_valid   200 60m;
+proxy_buffering     on;
+expires             864000;
+```
+
+---
+
+**Location 3 — Websocket (only needed when `workers` is enabled in `odoo.conf`)**
+
+| Field | Value |
+|---|---|
+| Location | `/websocket` |
+| Scheme | `http` |
+| Forward Hostname | `erp18` |
+| Forward Port | `8072` |
+
+Custom config:
+
+```nginx
+proxy_set_header    Upgrade     $http_upgrade;
+proxy_set_header    Connection  "upgrade";
+```
+
+> Port `8072` is the Odoo gevent/longpolling port used in multi-process mode. Make sure it is mapped in `docker-compose.yaml` (`8062:8072`).
+
+> **Without `workers`:** Odoo handles WebSocket on port `8069` (threaded mode). Do **not** add Location 3 — Location 1 (`/` → `8069`) already includes WebSocket upgrade headers and will handle `/websocket` correctly. Adding Location 3 when workers are disabled will cause a "Real-time connection lost" error because nothing is listening on `8072`.
+
+> We can check the workers status by running `docker exec erp18 ps aux | grep odoo`.
+
+**WebSocket configuration matrix:**
+
+| `workers` in odoo.conf | Location 3 in NPM | Result |
+|---|---|---|
+| No | No | ✅ Works — Location 1 handles `/websocket` on port `8069` |
+| No | Yes | ❌ Broken — routes `/websocket` to `8072`, nothing listening |
+| Yes | No | ❌ Broken — `/websocket` hits `8069`, workers expect `8072` |
+| Yes | Yes | ✅ Works — correctly routes to gevent worker on `8072` |
+
+---
+
+6. Click **Save**
+
+NPM will obtain a free SSL certificate and begin routing `yourdomain.com` → `erp18:8069` through `odoo-network`.
+
+## Adding a New Odoo Instance
+
+1. Copy the project folder for the new instance (e.g. `odoo14/`)
+2. Create a dedicated PostgreSQL user on the host:
+```bash
+sudo -u postgres psql -c "CREATE USER odoo14 WITH PASSWORD 'newpassword' CREATEDB;"
+```
+3. Update its `docker-compose.yaml` — new container name, port mapping, and DB credentials
+4. Run `docker-compose up -d --build` inside that folder
+5. Add a new Proxy Host in NPM pointing to the new container name
+
+## Update an Odoo Module
+
+### Automated — `update_modules.sh`
+
+Use the provided script to update a module across **all databases** owned by a PostgreSQL user automatically.
+
+**Location:** `odoo/script/update_modules.sh`
+
+**1. Edit the configuration block at the top of the script:**
+
+```bash
+DB_USER="odoo12"                    # PostgreSQL user — databases owned by this user will be updated
+MODULE="ksa_zatca_integration"      # Module name to pass to -u
+DEPLOY_TYPE="onpremise"             # "docker" or "onpremise"
+
+# Docker-specific (only used when DEPLOY_TYPE=docker)
+DOCKER_CONTAINER="erp18"
+DOCKER_CONFIG="/etc/odoo/odoo.conf"
+
+# On-premise (only used when DEPLOY_TYPE=onpremise)
+ONPREMISE_BIN="/usr/bin/odoo12-server"
+ONPREMISE_CONFIG="/etc/default/odoo12-server.conf"
+```
+
+**2. Make the script executable and run it:**
+
+```bash
+chmod +x odoo/script/update_modules.sh
+./odoo/script/update_modules.sh
+```
+
+The script will:
+1. Query PostgreSQL for all databases owned by `DB_USER`
+2. Run the update command for each database one by one
+3. Print a success/failure summary — exits with code `1` if any database failed
+
+**Commands used internally:**
+
+| Deploy type | Command |
+|---|---|
+| `onpremise` | `/usr/bin/odoo12-server -c /etc/default/odoo12-server.conf -u <module> -d <db> --stop-after-init` |
+| `docker` | `docker exec -i <container> odoo -c <config> -u <module> -d <db> --stop-after-init` |
+
+---
+
+### Manual — single database
+
+To update a module on one specific database without the script:
+
+**Docker:**
+
+```bash
+docker exec -it erp18 odoo -c /etc/odoo/odoo.conf -u web -d <your_database_name> --stop-after-init
+```
+
+**On-premise:**
+
+```bash
+/usr/bin/odoo12-server -c /etc/default/odoo12-server.conf -u ksa_zatca_integration -d <your_database_name> --stop-after-init
+```
+
+If you don't know the database name, list databases first:
+
+```bash
+# Docker
+docker exec -it erp18 psql -h 172.18.0.1 -U erp18 -l
+
+# On-premise
+psql -U odoo12 -l
+```
+
+After the update completes, restart the service:
+
+```bash
+# Docker
+docker-compose restart
+
+# On-premise
+sudo systemctl restart odoo12-server
+```
+
+## Rebuild Odoo Image
+
+```bash
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+## Fix PostgreSQL Connection After Reboot
+
+After a reboot, PostgreSQL may refuse connections from Odoo with:
+
+```
+connection to server at "172.18.0.1", port 5432 failed: Connection refused
+```
+
+**Root cause:** PostgreSQL is configured to listen on `172.18.0.1` (the Docker bridge IP), but that interface only exists after Docker creates the `odoo-network` bridge. Since PostgreSQL starts before Docker on boot, it fails to bind that IP and only listens on `localhost`.
+
+**Fix — wait for the Docker bridge IP to appear before PostgreSQL starts:**
+
+> On Ubuntu/Debian, `postgresql.service` is just a meta wrapper. The actual cluster runs as `postgresql@17-main.service`. The drop-in must go in `postgresql@.service.d` (with `@`) to apply to the real instance.
+
+**1. Create the drop-in file:**
+
+```bash
+sudo mkdir -p /etc/systemd/system/postgresql@.service.d
+sudo nano /etc/systemd/system/postgresql@.service.d/wait-docker-bridge.conf
+```
+
+```ini
+[Unit]
+After=docker.service
+Wants=docker.service
+
+[Service]
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ip addr | grep -q 172.18.0.1 && break; sleep 1; done'
+```
+
+**2. Reload systemd:**
+
+```bash
+sudo systemctl daemon-reload
+```
+
+> `ExecStartPre` polls for `172.18.0.1` every second for up to 30 seconds before allowing PostgreSQL to start.
