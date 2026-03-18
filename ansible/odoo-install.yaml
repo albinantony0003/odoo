@@ -141,12 +141,14 @@
       command: psql -t -A -c "SHOW config_file"
       register: postgres_conf_path_raw
       changed_when: false
+      check_mode: no
 
     - name: Get PostgreSQL hba file path
       become_user: postgres
       command: psql -t -A -c "SHOW hba_file"
       register: postgres_hba_path_raw
       changed_when: false
+      check_mode: no
 
     - name: Set PostgreSQL config paths
       set_fact:
