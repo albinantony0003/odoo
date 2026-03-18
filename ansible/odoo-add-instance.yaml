@@ -3,7 +3,7 @@
 # Docker, PostgreSQL, odoo-network, and Nginx Proxy Manager running.
 #
 # Usage:
-#   ansible-playbook odoo-add-instance.yaml -e "odoo_version=16 odoo_port=8070 odoo_gevent_port=8073 postgres_password=secret"
+#   #   ansible-playbook -i inventory.ini odoo-add-instance.yaml -e "odoo_version=18 odoo_port=8060 odoo_gevent_port=8073 postgres_user=cetmix18 postgres_password=tOtE4nX8Rf0b5g admin_passwd=wxLgnhKXLx45oD" --limit o4open --check
 
 - name: Add New Odoo Instance
   hosts: all
@@ -61,9 +61,15 @@
         role_attr_flags: CREATEDB
         state: present
 
+    - name: Get PostgreSQL hba file path
+      become_user: postgres
+      command: psql -t -A -c "SHOW hba_file"
+      register: postgres_hba_path_raw
+      changed_when: false
+
     - name: Add pg_hba.conf entry for this instance
       lineinfile:
-        path: "{{ lookup('pipe', 'ls -d /etc/postgresql/*/main | head -1') }}/pg_hba.conf"
+        path: "{{ postgres_hba_path_raw.stdout | trim }}"
         insertafter: '# IPv4 local connections:'
         line: "host    all             {{ postgres_user }}             {{ docker_subnet }}          md5"
         backup: yes

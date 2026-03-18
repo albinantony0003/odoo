@@ -136,20 +136,26 @@
       when: postgres_user_check.rowcount > 0
 
     # Configure PostgreSQL for Docker network access
-    - name: Find PostgreSQL version and config directory
-      shell: ls -d /etc/postgresql/*/main | head -1
-      register: postgres_config_dir
+    - name: Get PostgreSQL config file path
+      become_user: postgres
+      command: psql -t -A -c "SHOW config_file"
+      register: postgres_conf_path_raw
+      changed_when: false
+
+    - name: Get PostgreSQL hba file path
+      become_user: postgres
+      command: psql -t -A -c "SHOW hba_file"
+      register: postgres_hba_path_raw
       changed_when: false
 
     - name: Set PostgreSQL config paths
       set_fact:
-        postgres_conf_path: "{{ postgres_config_dir.stdout }}/postgresql.conf"
-        postgres_hba_path: "{{ postgres_config_dir.stdout }}/pg_hba.conf"
+        postgres_conf_path: "{{ postgres_conf_path_raw.stdout | trim }}"
+        postgres_hba_path: "{{ postgres_hba_path_raw.stdout | trim }}"
 
     - name: Display PostgreSQL config paths
       debug:
         msg: |
-          PostgreSQL config directory: {{ postgres_config_dir.stdout }}
           postgresql.conf: {{ postgres_conf_path }}
           pg_hba.conf: {{ postgres_hba_path }}
 
