@@ -42,7 +42,17 @@
           Database User: {{ postgres_user }}
           Directory: {{ odoo_user_dir }}
 
-    # Step 1: Create PostgreSQL user for this instance
+    # Step 1: Create system user for Odoo
+    - name: Create system user for Odoo
+      user:
+        name: "{{ postgres_user }}"
+        home: "/home/{{ postgres_user }}"
+        create_home: yes
+        system: yes
+        shell: /bin/bash
+        state: present
+
+    # Step 2: Create PostgreSQL user for this instance
     - name: Create PostgreSQL user
       become_user: postgres
       postgresql_user:
@@ -69,7 +79,7 @@
         delay: 3
         timeout: 30
 
-    # Step 2: Create directory structure
+    # Step 3: Create directory structure
     - name: Create instance directory structure
       file:
         path: "{{ item }}"
@@ -83,7 +93,7 @@
         - "{{ odoo_user_dir }}/odoo-data"
         - "{{ odoo_user_dir }}/script"
 
-    # Step 3: Create Dockerfile and build image
+    # Step 4: Create Dockerfile and build image
     - name: Create Dockerfile
       copy:
         dest: "{{ odoo_user_dir }}/Dockerfile"
@@ -104,7 +114,7 @@
         chdir: "{{ odoo_user_dir }}"
       when: odoo_custom_image not in image_check.stdout
 
-    # Step 4: Create docker-compose.yaml
+    # Step 5: Create docker-compose.yaml
     - name: Create docker-compose.yaml
       copy:
         dest: "{{ odoo_user_dir }}/docker-compose.yaml"
@@ -134,7 +144,7 @@
             {{ docker_network_name }}:
               external: true
 
-    # Step 5: Create odoo.conf
+    # Step 6: Create odoo.conf
     - name: Create Odoo configuration file
       copy:
         dest: "{{ odoo_user_dir }}/config/odoo.conf"
@@ -151,7 +161,7 @@
           workers = 2
           max_cron_threads = 1
 
-    # Step 6: Start the new Odoo instance
+    # Step 7: Start the new Odoo instance
     - name: Stop existing container if running
       command: docker compose down
       args:
