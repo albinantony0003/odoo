@@ -1,0 +1,200 @@
+---
+# Adds a new Odoo instance to a machine that already has the base setup:
+# Docker, PostgreSQL, odoo-network, and Nginx Proxy Manager running.
+#
+# Usage:
+#   ansible-playbook odoo-add-instance.yaml -e "odoo_version=16 odoo_port=8070 odoo_gevent_port=8073 postgres_password=secret"
+
+- name: Add New Odoo Instance
+  hosts: all
+  gather_facts: yes
+  become: yes
+  vars:
+    odoo_version: "16"
+    odoo_image_tag: "latest"
+    odoo_container_name: "odoo{{ odoo_version }}"
+    odoo_custom_image: "custom{{ odoo_version }}:{{ odoo_image_tag }}"
+    # Must be unique per instance on the same machine
+    odoo_port: "8070"
+    odoo_gevent_port: "8073"
+    # Database configuration
+    postgres_user: "odoo{{ odoo_version }}"
+    postgres_password: "changeme"
+    postgres_host: "172.18.0.1"
+    # Odoo master password
+    admin_passwd: "changeme"
+    # Existing network — must already exist
+    docker_network_name: "odoo-network"
+    docker_subnet: "172.18.0.0/24"
+    # Directory structure
+    docker_base_dir: "/opt/docker"
+    odoo_user_dir: "{{ docker_base_dir }}/{{ postgres_user }}"
+
+
+  tasks:
+    - name: Display new instance setup information
+      debug:
+        msg: |
+          Adding Odoo {{ odoo_version }} instance on {{ inventory_hostname }}
+          Container: {{ odoo_container_name }}
+          Image: {{ odoo_custom_image }}
+          Odoo port: {{ odoo_port }}  |  Gevent port: {{ odoo_gevent_port }}
+          Database User: {{ postgres_user }}
+          Directory: {{ odoo_user_dir }}
+
+    # Step 1: Create PostgreSQL user for this instance
+    - name: Create PostgreSQL user
+      become_user: postgres
+      postgresql_user:
+        name: "{{ postgres_user }}"
+        password: "{{ postgres_password }}"
+        role_attr_flags: CREATEDB
+        state: present
+
+    - name: Add pg_hba.conf entry for this instance
+      lineinfile:
+        path: "{{ lookup('pipe', 'ls -d /etc/postgresql/*/main | head -1') }}/pg_hba.conf"
+        insertafter: '# IPv4 local connections:'
+        line: "host    all             {{ postgres_user }}             {{ docker_subnet }}          md5"
+        backup: yes
+      notify: restart postgresql
+
+    - name: Flush handlers to apply pg_hba.conf changes
+      meta: flush_handlers
+
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        port: 5432
+        host: localhost
+        delay: 3
+        timeout: 30
+
+    # Step 2: Create directory structure
+    - name: Create instance directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ odoo_user_dir }}"
+        - "{{ odoo_user_dir }}/config"
+        - "{{ odoo_user_dir }}/custom-addons"
+        - "{{ odoo_user_dir }}/extra-addons"
+        - "{{ odoo_user_dir }}/odoo-data"
+        - "{{ odoo_user_dir }}/script"
+
+    # Step 3: Create Dockerfile and build image
+    - name: Create Dockerfile
+      copy:
+        dest: "{{ odoo_user_dir }}/Dockerfile"
+        content: |
+          FROM odoo:{{ odoo_version }}
+          USER root
+          RUN mkdir -p /mnt/custom-addons
+          RUN mkdir -p /mnt/extra-addons
+
+    - name: Check if custom image already exists
+      command: docker images {{ odoo_custom_image }} --format "{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}"
+      register: image_check
+      changed_when: false
+
+    - name: Build custom Odoo Docker image
+      command: docker build -t {{ odoo_custom_image }} .
+      args:
+        chdir: "{{ odoo_user_dir }}"
+      when: odoo_custom_image not in image_check.stdout
+
+    # Step 4: Create docker-compose.yaml
+    - name: Create docker-compose.yaml
+      copy:
+        dest: "{{ odoo_user_dir }}/docker-compose.yaml"
+        content: |
+          services:
+            odoo:
+              container_name: {{ odoo_container_name }}
+              build: ./Dockerfile
+              image: {{ odoo_custom_image }}
+              restart: unless-stopped
+              volumes:
+                - ./config:/etc/odoo
+                - ./custom-addons:/mnt/custom-addons
+                - ./extra-addons:/mnt/extra-addons
+                - ./odoo-data:/root/.local/share/Odoo
+              ports:
+                - "{{ odoo_port }}:8069"
+                - "{{ odoo_gevent_port }}:8072"
+              environment:
+                - HOST={{ postgres_host }}
+                - USER={{ postgres_user }}
+                - PASSWORD={{ postgres_password }}
+              networks:
+                - {{ docker_network_name }}
+
+          networks:
+            {{ docker_network_name }}:
+              external: true
+
+    # Step 5: Create odoo.conf
+    - name: Create Odoo configuration file
+      copy:
+        dest: "{{ odoo_user_dir }}/config/odoo.conf"
+        content: |
+          [options]
+          admin_passwd = {{ admin_passwd }}
+          addons_path = /mnt/extra-addons,/mnt/custom-addons
+          db_host = {{ postgres_host }}
+          db_port = 5432
+          db_user = {{ postgres_user }}
+          db_password = {{ postgres_password }}
+          xmlrpc_port = 8069
+          proxy_mode = True
+          workers = 2
+          max_cron_threads = 1
+
+    # Step 6: Start the new Odoo instance
+    - name: Stop existing container if running
+      command: docker compose down
+      args:
+        chdir: "{{ odoo_user_dir }}"
+      ignore_errors: yes
+
+    - name: Start Odoo instance
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ odoo_user_dir }}"
+
+    - name: Wait for Odoo to be ready
+      wait_for:
+        port: "{{ odoo_port }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 30
+        timeout: 300
+      ignore_errors: yes
+
+    - name: Verify container status
+      command: docker ps --filter name={{ odoo_container_name }} --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
+      register: container_status
+      changed_when: false
+
+    - name: Display setup completion message
+      debug:
+        msg: |
+          Odoo {{ odoo_version }} instance is up!
+
+          Container: {{ odoo_container_name }}
+          Odoo URL: http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}
+          Database User: {{ postgres_user }}
+          Directory: {{ odoo_user_dir }}
+
+          {{ container_status.stdout }}
+
+          Next steps in Nginx Proxy Manager (http://<server>:81):
+          - Add a Proxy Host → Forward to {{ odoo_container_name }}:8069
+          - Enable Websockets Support
+          - Add /websocket location → {{ odoo_container_name }}:8072
+
+  handlers:
+    - name: restart postgresql
+      systemd:
+        name: postgresql
+        state: restarted

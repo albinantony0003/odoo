@@ -1,4 +1,4 @@
-# Odoo  Docker Setup
+# Odoo Docker Setup
 
 This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL installed directly on the host machine.
 
@@ -6,6 +6,10 @@ This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL 
 
 ```
 .
+├── ansible/
+│   ├── inventory.ini               # Target hosts (gitignored)
+│   ├── odoo-install.yaml           # Full setup playbook (new machine)
+│   └── odoo-add-instance.yaml      # Add extra Odoo instance (existing machine)
 ├── odoo/
 │   ├── Dockerfile                  # Odoo image build file
 │   ├── docker-compose.yaml         # Odoo service
@@ -19,6 +23,81 @@ This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL 
 └── nginx/
     └── docker-compose.yaml         # Nginx Proxy Manager service
 ```
+
+## Ansible Automation
+
+Two playbooks handle server provisioning. Both read variables from the inventory or via `--extra-vars` (`-e`).
+
+### Inventory file (`ansible/inventory.ini`)
+
+```ini
+[production]
+tech ansible_host=192.168.1.10 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+[staging]
+dev ansible_host=192.168.1.20 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa
+```
+
+> `inventory.ini` is gitignored — it contains server IPs and SSH key paths.
+
+---
+
+### `odoo-install.yaml` — Full setup on a new machine
+
+Installs everything from scratch: Docker, PostgreSQL, Docker network, Nginx Proxy Manager, and the first Odoo instance.
+
+**Run:**
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-install.yaml --limit tech
+```
+
+**Override defaults with `-e`:**
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-install.yaml --limit tech \
+  -e "odoo_version=17 odoo_port=8069 postgres_password=secret admin_passwd=masterpass"
+```
+
+**Key variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `odoo_version` | `17` | Odoo version — sets container name, image tag, and DB user |
+| `odoo_image_tag` | `latest` | Docker image tag for the custom build |
+| `odoo_port` | `8069` | Host port mapped to Odoo HTTP (8069 inside container) |
+| `odoo_gevent_port` | `8072` | Host port mapped to Odoo gevent/websocket (8072 inside container) |
+| `postgres_password` | `changeme` | Password for the PostgreSQL user |
+| `admin_passwd` | `changeme` | Odoo master password (`admin_passwd` in odoo.conf) |
+| `docker_network_name` | `odoo-network` | Docker network shared by all Odoo instances and NPM |
+| `docker_subnet` | `172.18.0.0/24` | Subnet for the Docker network |
+| `docker_gateway` | `172.18.0.1` | Gateway IP — used by containers to reach host PostgreSQL |
+
+---
+
+### `odoo-add-instance.yaml` — Add a new Odoo instance to an existing machine
+
+Skips the base setup (Docker, PostgreSQL install, network, NPM) and only provisions a new Odoo instance. Use this when the machine is already running at least one Odoo instance.
+
+**Run:**
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit tech \
+  -e "odoo_version=16 odoo_port=8070 odoo_gevent_port=8073 postgres_password=secret"
+```
+
+**Key variables** (same as above, all overridable via `-e`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `odoo_version` | `16` | New instance version |
+| `odoo_port` | `8070` | Must be different from any existing instance |
+| `odoo_gevent_port` | `8073` | Must be different from any existing instance |
+| `postgres_password` | `changeme` | Password for the new PostgreSQL user |
+
+> After the playbook finishes, add a new Proxy Host in NPM pointing to `odoo<version>:8069` through `odoo-network`.
+
+---
 
 ## Network Architecture
 

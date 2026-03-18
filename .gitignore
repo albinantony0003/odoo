@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Ansible
+ansible/inventory.ini
+ansible/inventory/
+ansible/*.retry
+ansible/group_vars/
+ansible/host_vars/
