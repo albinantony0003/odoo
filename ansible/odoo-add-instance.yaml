@@ -66,6 +66,7 @@
       command: psql -t -A -c "SHOW hba_file"
       register: postgres_hba_path_raw
       changed_when: false
+      check_mode: no
 
     - name: Add pg_hba.conf entry for this instance
       lineinfile:
