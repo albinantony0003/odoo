@@ -24,7 +24,6 @@
     docker_gateway: "172.18.0.1"
     # Directory structure
     docker_base_dir: "/opt/docker"
-    odoo_system_user: "odoo"
     odoo_user_dir: "{{ docker_base_dir }}/{{ postgres_user }}"
     nginx_dir: "{{ docker_base_dir }}/nginx"
 
@@ -95,8 +94,8 @@
     # Step 3: Create system user for Odoo
     - name: Create system user for Odoo
       user:
-        name: "{{ odoo_system_user }}"
-        home: "/home/{{ odoo_system_user }}"
+        name: "{{ postgres_user }}"
+        home: "/home/{{ postgres_user }}"
         create_home: yes
         system: yes
         shell: /bin/bash
