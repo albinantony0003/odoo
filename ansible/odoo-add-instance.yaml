@@ -129,7 +129,7 @@
           services:
             odoo:
               container_name: {{ odoo_container_name }}
-              build: ./Dockerfile
+              build: .
               image: {{ odoo_custom_image }}
               restart: unless-stopped
               volumes:
