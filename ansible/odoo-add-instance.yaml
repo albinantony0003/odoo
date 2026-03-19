@@ -1,7 +1,6 @@
 ---
 # Adds a new Odoo instance to a machine that already has the base setup:
 # Docker, PostgreSQL, odoo-network, and Nginx Proxy Manager running.
-
 # # Usage:
 #   #ansible-playbook -i inventory.ini odoo-add-instance.yaml -e "odoo_version=18 odoo_port=8060 odoo_gevent_port=8073 postgres_user=cetmix18 postgres_password=tOtE4nX8Rf0b5g admin_passwd=wxLgnhKXLx45oD odoo_container_name=cetmix18 " --limit o4open --check
 
