@@ -302,8 +302,9 @@
           services:
             odoo:
               container_name: {{ odoo_container_name }}
-              build: ./Dockerfile
-              image: {{ odoo_custom_image }}
+              build:
+                  context: .
+                  dockerfile: Dockerfile
               restart: unless-stopped
               volumes:
                 - ./config:/etc/odoo
