@@ -20,8 +20,10 @@ This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL 
 │   ├── custom-addons/              # Custom Odoo modules
 │   ├── extra-addons/               # Extra Odoo modules
 │   └── odoo-data/                  # Persistent Odoo data
-└── nginx/
-    └── docker-compose.yaml         # Nginx Proxy Manager service
+├── nginx/
+│   └── docker-compose.yaml         # Nginx Proxy Manager service
+└── scripts/
+    └── demote-superusers.sh        # Script to demote PostgreSQL superusers
 ```
 
 ## Ansible Automation
@@ -515,3 +517,14 @@ sudo systemctl daemon-reload
 ```
 
 > `ExecStartPre` polls for `172.18.0.1` every second for up to 30 seconds before allowing PostgreSQL to start.
+
+## Demoting Database Superusers
+
+To enhance security, you can demote all database superusers (except `postgres` and `rdsadmin`) to `NOSUPERUSER` using the helper script `scripts/demote-superusers.sh`.
+
+You can execute this script directly from GitHub without downloading it locally using the following single-line command:
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/albinantony0003/odoo/main/scripts/demote-superusers.sh)
+```
+
