@@ -209,6 +209,39 @@
           - Add a Proxy Host → Forward to {{ odoo_container_name }}:8069
           - Enable Websockets Support
           - Add /websocket location → {{ odoo_container_name }}:8072
+          - Add the Custom Locations and Advanced tab config below to the Proxy Host
+
+          ===== Custom Locations tab =====
+
+          Location 1 - Main proxy
+          Location: /    Scheme: http    Forward Hostname: {{ odoo_container_name }}    Forward Port: 8069
+          Custom config:
+
+            proxy_redirect          off;
+            proxy_set_header        X-Forwarded-Host    $host;
+            proxy_set_header        X-Real-IP           $remote_addr;
+            proxy_set_header        X-Forwarded-For     $proxy_add_x_forwarded_for;
+            proxy_set_header        X-Forwarded-Proto   https;
+            proxy_http_version      1.1;
+            proxy_set_header        Upgrade             $http_upgrade;
+            proxy_set_header        Connection          "upgrade";
+
+          Location 2 - Static file caching
+          Location: ~* /web/static/    Scheme: http    Forward Hostname: {{ odoo_container_name }}    Forward Port: 8069
+          Custom config:
+
+            proxy_cache_valid   200 60m;
+            proxy_buffering     on;
+            expires             864000;
+
+          ===== Advanced tab (Custom Nginx Configuration) =====
+
+            # Global IP and agent blocks
+            if ($block_ip) { return 403 "Nothing to see"; }
+            if ($block_agent) { return 403 "Nothing to see"; }
+
+            # Include location rules
+            include /data/nginx/custom/odoo_security.conf;
 
   handlers:
     - name: restart postgresql

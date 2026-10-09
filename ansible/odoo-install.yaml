@@ -391,6 +391,15 @@
         - "{{ nginx_dir }}"
         - "{{ nginx_dir }}/data"
         - "{{ nginx_dir }}/letsencrypt"
+        - "{{ nginx_dir }}/data/nginx/custom"
+
+    # NPM auto-includes /data/nginx/custom/http.conf in the http block;
+    # odoo_security.conf is pulled in per proxy host via the Advanced tab.
+    - name: Copy Nginx custom configs
+      copy:
+        src: "{{ playbook_dir }}/../nginx/custom/"
+        dest: "{{ nginx_dir }}/data/nginx/custom/"
+        mode: '0644'
 
     - name: Create Nginx Proxy Manager docker-compose.yaml
       copy:
@@ -473,6 +482,39 @@
           - Add a Proxy Host pointing to {{ odoo_container_name }}:8069
           - Enable Websockets Support in NPM for real-time features
           - Add /websocket location pointing to {{ odoo_container_name }}:8072 (workers enabled)
+          - Add the Custom Locations and Advanced tab config below to the Proxy Host
+
+          ===== Custom Locations tab =====
+
+          Location 1 - Main proxy
+          Location: /    Scheme: http    Forward Hostname: {{ odoo_container_name }}    Forward Port: 8069
+          Custom config:
+
+            proxy_redirect          off;
+            proxy_set_header        X-Forwarded-Host    $host;
+            proxy_set_header        X-Real-IP           $remote_addr;
+            proxy_set_header        X-Forwarded-For     $proxy_add_x_forwarded_for;
+            proxy_set_header        X-Forwarded-Proto   https;
+            proxy_http_version      1.1;
+            proxy_set_header        Upgrade             $http_upgrade;
+            proxy_set_header        Connection          "upgrade";
+
+          Location 2 - Static file caching
+          Location: ~* /web/static/    Scheme: http    Forward Hostname: {{ odoo_container_name }}    Forward Port: 8069
+          Custom config:
+
+            proxy_cache_valid   200 60m;
+            proxy_buffering     on;
+            expires             864000;
+
+          ===== Advanced tab (Custom Nginx Configuration) =====
+
+            # Global IP and agent blocks
+            if ($block_ip) { return 403 "Nothing to see"; }
+            if ($block_agent) { return 403 "Nothing to see"; }
+
+            # Include location rules
+            include /data/nginx/custom/odoo_security.conf;
 
           Health Check: {% if odoo_health_check.status is defined and odoo_health_check.status == 200 %}ACCESSIBLE{% else %}NOT ACCESSIBLE (Status: {{ odoo_health_check.status | default('Connection failed') }}){% endif %}
 
