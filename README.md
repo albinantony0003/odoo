@@ -89,20 +89,33 @@ Skips the base setup (Docker, PostgreSQL install, network, NPM) and only provisi
 **Run:**
 
 ```bash
-ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit tech \
-  -e "odoo_version=16 odoo_port=8070 odoo_gevent_port=8073 postgres_password=secret"
+ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit host \
+  -e "odoo_version=18 odoo_port=8069 odoo_gevent_port=8072 postgres_password=<db-password> admin_passwd=<master-password> docker_base_dir=/opt/docker odoo_container_name=odoo postgres_user=odoo"
 ```
 
-**Key variables** (same as above, all overridable via `-e`):
+This creates an Odoo 18 instance in `/opt/docker/odoo` with a container named `odoo`, connecting to PostgreSQL as user `odoo`, and reachable on the host at `127.0.0.1:7068` (HTTP) and `127.0.0.1:7073` (websocket).
+
+> Use strong, unique values for `postgres_password` and `admin_passwd`, and don't commit real passwords. Passwords given with `-e` end up in shell history — instead you can put them in `ansible/host_vars/<host>.yaml` (e.g. `ansible/host_vars/camgen.yaml`, gitignored), which Ansible loads automatically for that host, and drop them from the `-e` string.
+
+**Key variables** (all overridable via `-e`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `odoo_version` | `16` | New instance version |
-| `odoo_port` | `8070` | Must be different from any existing instance |
-| `odoo_gevent_port` | `8073` | Must be different from any existing instance |
-| `postgres_password` | `changeme` | Password for the new PostgreSQL user |
+| `odoo_version` | `16` | Odoo version — base image `odoo:<version>` |
+| `odoo_port` | `8070` | Host port for Odoo HTTP (8069 inside container). Must be unique per machine |
+| `odoo_gevent_port` | `8073` | Host port for websocket/longpolling (8072 inside container). Must be unique per machine |
+| `postgres_user` | `odoo<version>` | PostgreSQL user for this instance — also the instance folder name |
+| `postgres_password` | `changeme` | Password for the PostgreSQL user |
+| `admin_passwd` | `changeme` | Odoo master password (`admin_passwd` in odoo.conf) |
+| `odoo_container_name` | `odoo<version>` | Docker container name — used as the NPM Forward Hostname |
+| `docker_base_dir` | `/opt/docker` | Parent directory for instance folders |
+| `odoo_image_tag` | `latest` | Tag for the custom image `custom<version>:<tag>` |
+| `postgres_host` | `172.18.0.1` | PostgreSQL host as seen from the container (`odoo-network` gateway) |
+| `docker_network_name` | `odoo-network` | Existing Docker network shared with NPM |
 
-> After the playbook finishes, add a new Proxy Host in NPM pointing to `odoo<version>:8069` through `odoo-network`.
+The instance folder is `<docker_base_dir>/<postgres_user>` (e.g. `/opt/docker/odoo`) and contains `Dockerfile`, `docker-compose.yaml`, `config/odoo.conf`, `custom-addons/`, `extra-addons/`, `odoo-data/` and `script/`.
+
+> After the playbook finishes, add a new Proxy Host in NPM pointing to `<odoo_container_name>:8069` (e.g. `odoo:8069`) through `odoo-network`. The playbook prints the Custom Locations and Advanced tab config to paste.
 
 ---
 
