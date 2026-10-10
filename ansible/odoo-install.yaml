@@ -341,6 +341,7 @@
           db_password = {{ postgres_password }}
           xmlrpc_port = 8069
           proxy_mode = True
+          list_db = False
 
     - name: Check if Odoo container is already running
       command: docker ps --filter name={{ odoo_container_name }} --format "{{ '{{' }}.Names{{ '}}' }}"

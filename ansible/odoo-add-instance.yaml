@@ -165,6 +165,7 @@
           db_password = {{ postgres_password }}
           xmlrpc_port = 8069
           proxy_mode = True
+          list_db = False
 
     # Step 7: Start the new Odoo instance
     - name: Stop existing container if running
