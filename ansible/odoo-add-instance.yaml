@@ -165,7 +165,7 @@
     - name: Wait for Odoo to be ready
       wait_for:
         port: "{{ odoo_port }}"
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "127.0.0.1"   # Odoo ports are bound to localhost only
         delay: 30
         timeout: 300
       ignore_errors: yes
@@ -181,7 +181,7 @@
           Odoo {{ odoo_version }} instance is up!
 
           Container: {{ odoo_container_name }}
-          Odoo URL: http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}
+          Odoo URL: http://127.0.0.1:{{ odoo_port }} (server-local only, public access via NPM)
           Database User: {{ postgres_user }}
           Directory: {{ odoo_user_dir }}
 

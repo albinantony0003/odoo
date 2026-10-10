@@ -347,7 +347,7 @@
     - name: Wait for Odoo container to be ready
       wait_for:
         port: "{{ odoo_port }}"
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "127.0.0.1"   # Odoo ports are bound to localhost only
         delay: 30
         timeout: 300
       ignore_errors: yes
@@ -406,13 +406,13 @@
     - name: Wait for Odoo to be ready after reboot
       wait_for:
         port: "{{ odoo_port }}"
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "127.0.0.1"   # Odoo ports are bound to localhost only
         delay: 30
         timeout: 300
 
     - name: Test Odoo accessibility
       uri:
-        url: "http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}"
+        url: "http://127.0.0.1:{{ odoo_port }}/web/health"
         method: GET
         timeout: 30
       register: odoo_health_check
@@ -424,7 +424,7 @@
           Odoo {{ odoo_version }} setup completed!
 
           Access Details:
-          - Odoo URL: http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}
+          - Odoo URL: http://127.0.0.1:{{ odoo_port }} (server-local only, public access via NPM)
           - NPM Admin UI: http://{{ ansible_default_ipv4.address }}:81
           - Container: {{ odoo_container_name }}
           - Database Host: {{ postgres_host }}
