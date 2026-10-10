@@ -9,7 +9,12 @@ This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL 
 ├── ansible/
 │   ├── inventory.ini               # Target hosts (gitignored)
 │   ├── odoo-install.yaml           # Full setup playbook (new machine)
-│   └── odoo-add-instance.yaml      # Add extra Odoo instance (existing machine)
+│   ├── odoo-add-instance.yaml      # Add extra Odoo instance (existing machine)
+│   └── templates/
+│       ├── Dockerfile.j2           # Odoo image (both playbooks)
+│       ├── docker-compose.yaml.j2  # Odoo service (both playbooks)
+│       ├── odoo.conf.j2            # Odoo config (both playbooks)
+│       └── nginx-docker-compose.yaml.j2  # Nginx Proxy Manager service (odoo-install.yaml)
 ├── odoo/
 │   ├── Dockerfile                  # Odoo image build file
 │   ├── docker-compose.yaml         # Odoo service
@@ -189,6 +194,10 @@ sudo -u postgres psql -c "CREATE USER odoo12 WITH PASSWORD 'C8WNhJ4reXm' CREATED
 |---|---|
 | Container | `odoo12` |
 | Build | `./Dockerfile` |
+| Runs as | `odoo` (non-root), `no-new-privileges`, all capabilities dropped except `NET_BIND_SERVICE` |
+| Ports | Bound to `127.0.0.1` only — reachable through NPM, not directly |
+| Filestore | `./odoo-data` → `/var/lib/odoo/.local/share/Odoo` (must be owned by the image's `odoo` UID/GID) |
+| Health check | `curl -f http://localhost:8069/web/health` |
 | DB Host | `172.18.0.1` (`odoo-network` gateway) |
 | DB Port | `5432` |
 | Network | `odoo-network` (external) |
@@ -247,9 +256,18 @@ docker network create odoo-network
 
 **Step 3 — Build and start Odoo:**
 
+The container runs as the non-root `odoo` user, so `odoo-data` must be owned by that user's UID/GID from the image (the Ansible playbooks do this automatically):
+
 ```bash
-docker-compose up -d --build
+docker-compose build
+ODOO_UID=$(docker run --rm --entrypoint id custom18:latest -u odoo)
+ODOO_GID=$(docker run --rm --entrypoint id custom18:latest -g odoo)
+mkdir -p odoo-data
+sudo chown -R "$ODOO_UID:$ODOO_GID" odoo-data
+docker-compose up -d
 ```
+
+> Upgrading an instance that previously ran as root: the filestore path inside the container moved from `/root/.local/share/Odoo` to `/var/lib/odoo/.local/share/Odoo`. The host folder (`./odoo-data`) is unchanged — just run the `chown` above before starting the new container. Back up `odoo-data` first.
 
 **Step 4 — Start Nginx Proxy Manager:**
 

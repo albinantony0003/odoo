@@ -268,13 +268,10 @@
         - "{{ odoo_user_dir }}/script"
 
     - name: Create custom Dockerfile
-      copy:
+      template:
+        src: templates/Dockerfile.j2
         dest: "{{ odoo_user_dir }}/Dockerfile"
-        content: |
-          FROM odoo:{{ odoo_version }}
-          USER root
-          RUN mkdir -p /mnt/custom-addons
-          RUN mkdir -p /mnt/extra-addons
+      register: dockerfile
 
     - name: Check if custom image already exists
       command: docker images {{ odoo_custom_image }} --format "{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}"
@@ -285,8 +282,29 @@
       command: docker build -t {{ odoo_custom_image }} .
       args:
         chdir: "{{ odoo_user_dir }}"
-      when: odoo_custom_image not in image_check.stdout
+      when: odoo_custom_image not in image_check.stdout or dockerfile.changed
       register: image_build
+
+    # The container runs as the image's non-root "odoo" user, so the bind-mounted
+    # filestore must be owned by that UID/GID (not root) for Odoo to write to it.
+    - name: Get odoo user UID from the image
+      command: docker run --rm --entrypoint id {{ odoo_custom_image }} -u odoo
+      register: odoo_uid_out
+      changed_when: false
+
+    - name: Get odoo group GID from the image
+      command: docker run --rm --entrypoint id {{ odoo_custom_image }} -g odoo
+      register: odoo_gid_out
+      changed_when: false
+
+    - name: Set ownership of odoo-data to the odoo user
+      file:
+        path: "{{ odoo_user_dir }}/odoo-data"
+        state: directory
+        owner: "{{ odoo_uid_out.stdout | trim }}"
+        group: "{{ odoo_gid_out.stdout | trim }}"
+        mode: 'u=rwX,g=rX,o='
+        recurse: yes
 
     - name: Verify custom image creation
       command: docker images {{ odoo_custom_image }}
@@ -299,49 +317,14 @@
 
     # Step 8: Setup Odoo with docker-compose
     - name: Create docker-compose.yaml
-      copy:
+      template:
+        src: templates/docker-compose.yaml.j2
         dest: "{{ odoo_user_dir }}/docker-compose.yaml"
-        content: |
-          services:
-            odoo:
-              container_name: {{ odoo_container_name }}
-              build:
-                  context: .
-                  dockerfile: Dockerfile
-              restart: unless-stopped
-              volumes:
-                - ./config:/etc/odoo
-                - ./custom-addons:/mnt/custom-addons
-                - ./extra-addons:/mnt/extra-addons
-                - ./odoo-data:/root/.local/share/Odoo
-              ports:
-                - "127.0.0.1:{{ odoo_port }}:8069"
-                - "127.0.0.1:{{ odoo_gevent_port }}:8072"
-              environment:
-                - HOST={{ postgres_host }}
-                - USER={{ postgres_user }}
-                - PASSWORD={{ postgres_password }}
-              networks:
-                - {{ docker_network_name }}
-
-          networks:
-            {{ docker_network_name }}:
-              external: true
 
     - name: Create Odoo configuration file
-      copy:
+      template:
+        src: templates/odoo.conf.j2
         dest: "{{ odoo_user_dir }}/config/odoo.conf"
-        content: |
-          [options]
-          admin_passwd = {{ admin_passwd }}
-          addons_path = /mnt/extra-addons,/mnt/custom-addons
-          db_host = {{ postgres_host }}
-          db_port = 5432
-          db_user = {{ postgres_user }}
-          db_password = {{ postgres_password }}
-          xmlrpc_port = 8069
-          proxy_mode = True
-          list_db = False
 
     - name: Check if Odoo container is already running
       command: docker ps --filter name={{ odoo_container_name }} --format "{{ '{{' }}.Names{{ '}}' }}"
@@ -401,27 +384,9 @@
         mode: '0644'
 
     - name: Create Nginx Proxy Manager docker-compose.yaml
-      copy:
+      template:
+        src: templates/nginx-docker-compose.yaml.j2
         dest: "{{ nginx_dir }}/docker-compose.yaml"
-        content: |
-          services:
-            nginx-proxy:
-              image: jc21/nginx-proxy-manager:latest
-              container_name: nginx-proxy
-              restart: unless-stopped
-              ports:
-                - "80:80"
-                - "81:81"
-                - "443:443"
-              volumes:
-                - ./data:/data
-                - ./letsencrypt:/etc/letsencrypt
-              networks:
-                - {{ docker_network_name }}
-
-          networks:
-            {{ docker_network_name }}:
-              external: true
 
     - name: Start Nginx Proxy Manager
       command: docker compose up -d
