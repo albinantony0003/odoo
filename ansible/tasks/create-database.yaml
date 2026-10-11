@@ -1,7 +1,8 @@
 ---
 # Creates the first Odoo database through /web/database/create.
-# The database manager UI is hidden (list_db = False), but the endpoint still
-# works when given the master password. Skipped if the database already exists.
+# Odoo blocks all database management calls (including create) while
+# list_db = False, so list_db is switched on just for the creation and always
+# switched back off afterwards. Skipped if the database already exists.
 
 - name: Check if Odoo database already exists
   become_user: postgres
@@ -10,49 +11,77 @@
   changed_when: false
   check_mode: no
 
-- name: Wait for Odoo HTTP to respond
-  uri:
-    url: "http://127.0.0.1:{{ odoo_port }}/web/health"
-    status_code: 200
-  register: odoo_health
-  until: odoo_health.status == 200
-  retries: 30
-  delay: 10
+- name: Create Odoo database with database management temporarily enabled
   when: odoo_db_check.stdout | trim != '1'
+  block:
+    - name: Temporarily enable database management (list_db = True)
+      lineinfile:
+        path: "{{ odoo_user_dir }}/config/odoo.conf"
+        regexp: '^list_db\s*='
+        line: "list_db = True"
 
-# Uses the uri module instead of curl so passwords with special characters
-# (&, =, +, ...) are form-encoded correctly.
-# "demo" is deliberately not sent: Odoo checks bool(post.get('demo')), so even
-# demo=0 would load demo data. "phone" is required by Odoo 17+.
-- name: Create Odoo database
-  uri:
-    url: "http://127.0.0.1:{{ odoo_port }}/web/database/create"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      master_pwd: "{{ admin_passwd }}"
-      name: "{{ odoo_db_name }}"
-      login: "{{ odoo_db_admin_login }}"
-      password: "{{ odoo_db_admin_password }}"
-      lang: "{{ odoo_db_lang }}"
-      country_code: "{{ odoo_db_country_code }}"
-      phone: ""
-    follow_redirects: none
-    status_code: [200, 303]
-    return_content: yes
-    timeout: 900
-  register: odoo_db_create
-  no_log: true
-  when: odoo_db_check.stdout | trim != '1'
+    - name: Restart Odoo to apply list_db = True
+      command: docker restart {{ odoo_container_name }}
 
-# Odoo redirects (303) on success and re-renders the form (200) with the error.
-- name: Fail if Odoo database creation failed
-  fail:
-    msg: "{{ odoo_db_create.content | regex_search('Database creation error[^<]*') | default('Database creation failed (no error message returned)', true) }}"
-  when:
-    - odoo_db_create is not skipped
-    - not ansible_check_mode
-    - odoo_db_create.status != 303
+    - name: Wait for Odoo HTTP to respond
+      uri:
+        url: "http://127.0.0.1:{{ odoo_port }}/web/health"
+        status_code: 200
+      register: odoo_health
+      until: odoo_health.status == 200
+      retries: 30
+      delay: 10
+
+    # Uses the uri module instead of curl so passwords with special characters
+    # (&, =, +, ...) are form-encoded correctly.
+    # "demo" is deliberately not sent: Odoo checks bool(post.get('demo')), so even
+    # demo=0 would load demo data. "phone" is required by Odoo 17+.
+    - name: Create Odoo database
+      uri:
+        url: "http://127.0.0.1:{{ odoo_port }}/web/database/create"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          master_pwd: "{{ admin_passwd }}"
+          name: "{{ odoo_db_name }}"
+          login: "{{ odoo_db_admin_login }}"
+          password: "{{ odoo_db_admin_password }}"
+          lang: "{{ odoo_db_lang }}"
+          country_code: "{{ odoo_db_country_code }}"
+          phone: ""
+        follow_redirects: none
+        status_code: [200, 303]
+        return_content: yes
+        timeout: 900
+      register: odoo_db_create
+      no_log: true
+
+    # Odoo redirects (303) on success and re-renders the form (200) with the error.
+    - name: Fail if Odoo database creation failed
+      fail:
+        msg: "{{ odoo_db_create.content | regex_search('Database creation error[^<]*') | default('Database creation failed (no error message returned)', true) }}"
+      when:
+        - not ansible_check_mode
+        - odoo_db_create.status != 303
+
+  always:
+    - name: Disable database management again (list_db = False)
+      lineinfile:
+        path: "{{ odoo_user_dir }}/config/odoo.conf"
+        regexp: '^list_db\s*='
+        line: "list_db = False"
+
+    - name: Restart Odoo to apply list_db = False
+      command: docker restart {{ odoo_container_name }}
+
+    - name: Wait for Odoo HTTP to respond after restart
+      uri:
+        url: "http://127.0.0.1:{{ odoo_port }}/web/health"
+        status_code: 200
+      register: odoo_health
+      until: odoo_health.status == 200
+      retries: 30
+      delay: 10
 
 - name: Display Odoo database information
   debug:
