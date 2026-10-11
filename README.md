@@ -112,6 +112,13 @@ This creates an Odoo 18 instance in `/opt/docker/odoo` with a container named `o
 | `odoo_image_tag` | `latest` | Tag for the custom image `custom<version>:<tag>` |
 | `postgres_host` | `172.18.0.1` | PostgreSQL host as seen from the container (`odoo-network` gateway) |
 | `docker_network_name` | `odoo-network` | Existing Docker network shared with NPM |
+| `odoo_db_name` | `<odoo_container_name>` | First database, created automatically via `/web/database/create` |
+| `odoo_db_admin_login` | `meadmin@example.com` | Login of the database's admin user |
+| `odoo_db_admin_password` | `<admin_passwd>` | Password of the database's admin user |
+| `odoo_db_lang` | `en_US` | Database language |
+| `odoo_db_country_code` | `us` | Database country |
+
+> The first database is created by `ansible/tasks/create-database.yaml` (shared by both playbooks) once Odoo is up, and its URL, name, admin login and password are printed. If a database with that name already exists it is left untouched.
 
 The instance folder is `<docker_base_dir>/<postgres_user>` (e.g. `/opt/docker/odoo`) and contains `Dockerfile`, `docker-compose.yaml`, `config/odoo.conf`, `custom-addons/`, `extra-addons/`, `odoo-data/` and `script/`.
 

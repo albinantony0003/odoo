@@ -1,0 +1,65 @@
+---
+# Creates the first Odoo database through /web/database/create.
+# The database manager UI is hidden (list_db = False), but the endpoint still
+# works when given the master password. Skipped if the database already exists.
+
+- name: Check if Odoo database already exists
+  become_user: postgres
+  command: psql -t -A -c "SELECT 1 FROM pg_database WHERE datname = '{{ odoo_db_name }}'"
+  register: odoo_db_check
+  changed_when: false
+  check_mode: no
+
+- name: Wait for Odoo HTTP to respond
+  uri:
+    url: "http://127.0.0.1:{{ odoo_port }}/web/health"
+    status_code: 200
+  register: odoo_health
+  until: odoo_health.status == 200
+  retries: 30
+  delay: 10
+  when: odoo_db_check.stdout | trim != '1'
+
+# Uses the uri module instead of curl so passwords with special characters
+# (&, =, +, ...) are form-encoded correctly.
+# "demo" is deliberately not sent: Odoo checks bool(post.get('demo')), so even
+# demo=0 would load demo data. "phone" is required by Odoo 17+.
+- name: Create Odoo database
+  uri:
+    url: "http://127.0.0.1:{{ odoo_port }}/web/database/create"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      master_pwd: "{{ admin_passwd }}"
+      name: "{{ odoo_db_name }}"
+      login: "{{ odoo_db_admin_login }}"
+      password: "{{ odoo_db_admin_password }}"
+      lang: "{{ odoo_db_lang }}"
+      country_code: "{{ odoo_db_country_code }}"
+      phone: ""
+    follow_redirects: none
+    status_code: [200, 303]
+    return_content: yes
+    timeout: 900
+  register: odoo_db_create
+  no_log: true
+  when: odoo_db_check.stdout | trim != '1'
+
+# Odoo redirects (303) on success and re-renders the form (200) with the error.
+- name: Fail if Odoo database creation failed
+  fail:
+    msg: "{{ odoo_db_create.content | regex_search('Database creation error[^<]*') | default('Database creation failed (no error message returned)', true) }}"
+  when:
+    - odoo_db_create is not skipped
+    - not ansible_check_mode
+    - odoo_db_create.status != 303
+
+- name: Display Odoo database information
+  debug:
+    msg: |
+      Database {{ 'already existed (not recreated)' if odoo_db_check.stdout | trim == '1' else 'created' }}
+
+      URL         - http://127.0.0.1:{{ odoo_port }} (server-local) / access via NPM proxy host
+      DB name     - {{ odoo_db_name }}
+      DB admin    - {{ odoo_db_admin_login }}
+      DB password - {{ odoo_db_admin_password }}{% if odoo_db_check.stdout | trim == '1' %} (only valid if unchanged since creation){% endif %}

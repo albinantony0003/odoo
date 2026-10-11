@@ -21,6 +21,12 @@
     postgres_host: "172.18.0.1"
     # Odoo master password
     admin_passwd: "changeme"
+    # First database, created via /web/database/create
+    odoo_db_name: "{{ odoo_container_name }}"
+    odoo_db_admin_login: "meadmin@example.com"
+    odoo_db_admin_password: "{{ admin_passwd }}"
+    odoo_db_lang: "en_US"
+    odoo_db_country_code: "us"
     # Network configuration
     docker_network_name: "odoo-network"
     docker_subnet: "172.18.0.0/24"
@@ -351,6 +357,9 @@
         delay: 30
         timeout: 300
       ignore_errors: yes
+
+    - name: Create the first Odoo database
+      include_tasks: tasks/create-database.yaml
 
     - name: Verify Odoo container status
       command: docker ps --filter name={{ odoo_container_name }} --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
