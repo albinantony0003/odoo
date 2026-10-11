@@ -1,0 +1,16 @@
+FROM odoo:{{ odoo_version }}
+
+USER root
+
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /mnt/custom-addons \
+    && mkdir -p /mnt/extra-addons \
+    && chown -R odoo:odoo /mnt/custom-addons \
+    && chown -R odoo:odoo /mnt/extra-addons
+
+USER odoo
+
+EXPOSE 8069 8072

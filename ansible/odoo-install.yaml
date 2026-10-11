@@ -21,6 +21,12 @@
     postgres_host: "172.18.0.1"
     # Odoo master password
     admin_passwd: "changeme"
+    # First database, created via /web/database/create
+    odoo_db_name: "{{ odoo_container_name }}"
+    odoo_db_admin_login: "meadmin@example.com"
+    odoo_db_admin_password: "{{ admin_passwd }}"
+    odoo_db_lang: "en_US"
+    odoo_db_country_code: "us"
     # Network configuration
     docker_network_name: "odoo-network"
     docker_subnet: "172.18.0.0/24"
@@ -253,6 +259,21 @@
       debug:
         msg: "Odoo network '{{ docker_network_name }}' is ready with subnet {{ docker_subnet }}"
 
+    # PostgreSQL was restarted in Step 4, before the bridge IP (docker_gateway)
+    # existed, so it could only bind localhost. Restart again now that the
+    # bridge is up so it also listens on the gateway IP Odoo connects to.
+    - name: Restart PostgreSQL to bind the Docker bridge IP
+      systemd:
+        name: postgresql
+        state: restarted
+
+    - name: Wait for PostgreSQL on the Docker bridge IP
+      wait_for:
+        port: 5432
+        host: "{{ docker_gateway }}"
+        delay: 2
+        timeout: 60
+
     # Step 7: Setup custom Docker image
     - name: Create Odoo user directory structure
       file:
@@ -268,13 +289,10 @@
         - "{{ odoo_user_dir }}/script"
 
     - name: Create custom Dockerfile
-      copy:
+      template:
+        src: templates/Dockerfile.j2
         dest: "{{ odoo_user_dir }}/Dockerfile"
-        content: |
-          FROM odoo:{{ odoo_version }}
-          USER root
-          RUN mkdir -p /mnt/custom-addons
-          RUN mkdir -p /mnt/extra-addons
+      register: dockerfile
 
     - name: Check if custom image already exists
       command: docker images {{ odoo_custom_image }} --format "{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}"
@@ -285,8 +303,29 @@
       command: docker build -t {{ odoo_custom_image }} .
       args:
         chdir: "{{ odoo_user_dir }}"
-      when: odoo_custom_image not in image_check.stdout
+      when: odoo_custom_image not in image_check.stdout or dockerfile.changed
       register: image_build
+
+    # The container runs as the image's non-root "odoo" user, so the bind-mounted
+    # filestore must be owned by that UID/GID (not root) for Odoo to write to it.
+    - name: Get odoo user UID from the image
+      command: docker run --rm --entrypoint id {{ odoo_custom_image }} -u odoo
+      register: odoo_uid_out
+      changed_when: false
+
+    - name: Get odoo group GID from the image
+      command: docker run --rm --entrypoint id {{ odoo_custom_image }} -g odoo
+      register: odoo_gid_out
+      changed_when: false
+
+    - name: Set ownership of odoo-data to the odoo user
+      file:
+        path: "{{ odoo_user_dir }}/odoo-data"
+        state: directory
+        owner: "{{ odoo_uid_out.stdout | trim }}"
+        group: "{{ odoo_gid_out.stdout | trim }}"
+        mode: 'u=rwX,g=rX,o='
+        recurse: yes
 
     - name: Verify custom image creation
       command: docker images {{ odoo_custom_image }}
@@ -299,49 +338,14 @@
 
     # Step 8: Setup Odoo with docker-compose
     - name: Create docker-compose.yaml
-      copy:
+      template:
+        src: templates/docker-compose.yaml.j2
         dest: "{{ odoo_user_dir }}/docker-compose.yaml"
-        content: |
-          services:
-            odoo:
-              container_name: {{ odoo_container_name }}
-              build:
-                  context: .
-                  dockerfile: Dockerfile
-              restart: unless-stopped
-              volumes:
-                - ./config:/etc/odoo
-                - ./custom-addons:/mnt/custom-addons
-                - ./extra-addons:/mnt/extra-addons
-                - ./odoo-data:/root/.local/share/Odoo
-              ports:
-                - "127.0.0.1:{{ odoo_port }}:8069"
-                - "127.0.0.1:{{ odoo_gevent_port }}:8072"
-              environment:
-                - HOST={{ postgres_host }}
-                - USER={{ postgres_user }}
-                - PASSWORD={{ postgres_password }}
-              networks:
-                - {{ docker_network_name }}
-
-          networks:
-            {{ docker_network_name }}:
-              external: true
 
     - name: Create Odoo configuration file
-      copy:
+      template:
+        src: templates/odoo.conf.j2
         dest: "{{ odoo_user_dir }}/config/odoo.conf"
-        content: |
-          [options]
-          admin_passwd = {{ admin_passwd }}
-          addons_path = /mnt/extra-addons,/mnt/custom-addons
-          db_host = {{ postgres_host }}
-          db_port = 5432
-          db_user = {{ postgres_user }}
-          db_password = {{ postgres_password }}
-          xmlrpc_port = 8069
-          proxy_mode = True
-          list_db = False
 
     - name: Check if Odoo container is already running
       command: docker ps --filter name={{ odoo_container_name }} --format "{{ '{{' }}.Names{{ '}}' }}"
@@ -364,10 +368,13 @@
     - name: Wait for Odoo container to be ready
       wait_for:
         port: "{{ odoo_port }}"
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "127.0.0.1"   # Odoo ports are bound to localhost only
         delay: 30
         timeout: 300
       ignore_errors: yes
+
+    - name: Create the first Odoo database
+      include_tasks: tasks/create-database.yaml
 
     - name: Verify Odoo container status
       command: docker ps --filter name={{ odoo_container_name }} --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
@@ -401,27 +408,9 @@
         mode: '0644'
 
     - name: Create Nginx Proxy Manager docker-compose.yaml
-      copy:
+      template:
+        src: templates/nginx-docker-compose.yaml.j2
         dest: "{{ nginx_dir }}/docker-compose.yaml"
-        content: |
-          services:
-            nginx-proxy:
-              image: jc21/nginx-proxy-manager:latest
-              container_name: nginx-proxy
-              restart: unless-stopped
-              ports:
-                - "80:80"
-                - "81:81"
-                - "443:443"
-              volumes:
-                - ./data:/data
-                - ./letsencrypt:/etc/letsencrypt
-              networks:
-                - {{ docker_network_name }}
-
-          networks:
-            {{ docker_network_name }}:
-              external: true
 
     - name: Start Nginx Proxy Manager
       command: docker compose up -d
@@ -441,13 +430,13 @@
     - name: Wait for Odoo to be ready after reboot
       wait_for:
         port: "{{ odoo_port }}"
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "127.0.0.1"   # Odoo ports are bound to localhost only
         delay: 30
         timeout: 300
 
     - name: Test Odoo accessibility
       uri:
-        url: "http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}"
+        url: "http://127.0.0.1:{{ odoo_port }}/web/health"
         method: GET
         timeout: 30
       register: odoo_health_check
@@ -459,7 +448,7 @@
           Odoo {{ odoo_version }} setup completed!
 
           Access Details:
-          - Odoo URL: http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}
+          - Odoo URL: http://127.0.0.1:{{ odoo_port }} (server-local only, public access via NPM)
           - NPM Admin UI: http://{{ ansible_default_ipv4.address }}:81
           - Container: {{ odoo_container_name }}
           - Database Host: {{ postgres_host }}

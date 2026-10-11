@@ -9,7 +9,12 @@ This project runs Odoo behind Nginx Proxy Manager using Docker, with PostgreSQL 
 ├── ansible/
 │   ├── inventory.ini               # Target hosts (gitignored)
 │   ├── odoo-install.yaml           # Full setup playbook (new machine)
-│   └── odoo-add-instance.yaml      # Add extra Odoo instance (existing machine)
+│   ├── odoo-add-instance.yaml      # Add extra Odoo instance (existing machine)
+│   └── templates/
+│       ├── Dockerfile.j2           # Odoo image (both playbooks)
+│       ├── docker-compose.yaml.j2  # Odoo service (both playbooks)
+│       ├── odoo.conf.j2            # Odoo config (both playbooks)
+│       └── nginx-docker-compose.yaml.j2  # Nginx Proxy Manager service (odoo-install.yaml)
 ├── odoo/
 │   ├── Dockerfile                  # Odoo image build file
 │   ├── docker-compose.yaml         # Odoo service
@@ -84,20 +89,40 @@ Skips the base setup (Docker, PostgreSQL install, network, NPM) and only provisi
 **Run:**
 
 ```bash
-ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit tech \
-  -e "odoo_version=16 odoo_port=8070 odoo_gevent_port=8073 postgres_password=secret"
+ansible-playbook -i ansible/inventory.ini ansible/odoo-add-instance.yaml --limit host \
+  -e "odoo_version=18 odoo_port=8069 odoo_gevent_port=8072 postgres_password=<db-password> admin_passwd=<master-password> docker_base_dir=/opt/docker odoo_container_name=odoo postgres_user=odoo"
 ```
 
-**Key variables** (same as above, all overridable via `-e`):
+This creates an Odoo 18 instance in `/opt/docker/odoo` with a container named `odoo`, connecting to PostgreSQL as user `odoo`, and reachable on the host at `127.0.0.1:7068` (HTTP) and `127.0.0.1:7073` (websocket).
+
+> Use strong, unique values for `postgres_password` and `admin_passwd`, and don't commit real passwords. Passwords given with `-e` end up in shell history — instead you can put them in `ansible/host_vars/<host>.yaml` (e.g. `ansible/host_vars/camgen.yaml`, gitignored), which Ansible loads automatically for that host, and drop them from the `-e` string.
+
+**Key variables** (all overridable via `-e`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `odoo_version` | `16` | New instance version |
-| `odoo_port` | `8070` | Must be different from any existing instance |
-| `odoo_gevent_port` | `8073` | Must be different from any existing instance |
-| `postgres_password` | `changeme` | Password for the new PostgreSQL user |
+| `odoo_version` | `16` | Odoo version — base image `odoo:<version>` |
+| `odoo_port` | `8070` | Host port for Odoo HTTP (8069 inside container). Must be unique per machine |
+| `odoo_gevent_port` | `8073` | Host port for websocket/longpolling (8072 inside container). Must be unique per machine |
+| `postgres_user` | `odoo<version>` | PostgreSQL user for this instance — also the instance folder name |
+| `postgres_password` | `changeme` | Password for the PostgreSQL user |
+| `admin_passwd` | `changeme` | Odoo master password (`admin_passwd` in odoo.conf) |
+| `odoo_container_name` | `odoo<version>` | Docker container name — used as the NPM Forward Hostname |
+| `docker_base_dir` | `/opt/docker` | Parent directory for instance folders |
+| `odoo_image_tag` | `latest` | Tag for the custom image `custom<version>:<tag>` |
+| `postgres_host` | `172.18.0.1` | PostgreSQL host as seen from the container (`odoo-network` gateway) |
+| `docker_network_name` | `odoo-network` | Existing Docker network shared with NPM |
+| `odoo_db_name` | `<odoo_container_name>` | First database, created automatically via `/web/database/create` |
+| `odoo_db_admin_login` | `meadmin@example.com` | Login of the database's admin user |
+| `odoo_db_admin_password` | `<admin_passwd>` | Password of the database's admin user |
+| `odoo_db_lang` | `en_US` | Database language |
+| `odoo_db_country_code` | `us` | Database country |
 
-> After the playbook finishes, add a new Proxy Host in NPM pointing to `odoo<version>:8069` through `odoo-network`.
+> The first database is created by `ansible/tasks/create-database.yaml` (shared by both playbooks) once Odoo is up, and its URL, name, admin login and password are printed. If a database with that name already exists it is left untouched.
+
+The instance folder is `<docker_base_dir>/<postgres_user>` (e.g. `/opt/docker/odoo`) and contains `Dockerfile`, `docker-compose.yaml`, `config/odoo.conf`, `custom-addons/`, `extra-addons/`, `odoo-data/` and `script/`.
+
+> After the playbook finishes, add a new Proxy Host in NPM pointing to `<odoo_container_name>:8069` (e.g. `odoo:8069`) through `odoo-network`. The playbook prints the Custom Locations and Advanced tab config to paste.
 
 ---
 
@@ -189,6 +214,10 @@ sudo -u postgres psql -c "CREATE USER odoo12 WITH PASSWORD 'C8WNhJ4reXm' CREATED
 |---|---|
 | Container | `odoo12` |
 | Build | `./Dockerfile` |
+| Runs as | `odoo` (non-root), `no-new-privileges`, all capabilities dropped except `NET_BIND_SERVICE` |
+| Ports | Bound to `127.0.0.1` only — reachable through NPM, not directly |
+| Filestore | `./odoo-data` → `/var/lib/odoo/.local/share/Odoo` (must be owned by the image's `odoo` UID/GID) |
+| Health check | `curl -f http://localhost:8069/web/health` |
 | DB Host | `172.18.0.1` (`odoo-network` gateway) |
 | DB Port | `5432` |
 | Network | `odoo-network` (external) |
@@ -247,9 +276,18 @@ docker network create odoo-network
 
 **Step 3 — Build and start Odoo:**
 
+The container runs as the non-root `odoo` user, so `odoo-data` must be owned by that user's UID/GID from the image (the Ansible playbooks do this automatically):
+
 ```bash
-docker-compose up -d --build
+docker-compose build
+ODOO_UID=$(docker run --rm --entrypoint id custom18:latest -u odoo)
+ODOO_GID=$(docker run --rm --entrypoint id custom18:latest -g odoo)
+mkdir -p odoo-data
+sudo chown -R "$ODOO_UID:$ODOO_GID" odoo-data
+docker-compose up -d
 ```
+
+> Upgrading an instance that previously ran as root: the filestore path inside the container moved from `/root/.local/share/Odoo` to `/var/lib/odoo/.local/share/Odoo`. The host folder (`./odoo-data`) is unchanged — just run the `chown` above before starting the new container. Back up `odoo-data` first.
 
 **Step 4 — Start Nginx Proxy Manager:**
 

@@ -22,6 +22,12 @@
     postgres_host: "172.18.0.1"
     # Odoo master password
     admin_passwd: "changeme"
+    # First database, created via /web/database/create
+    odoo_db_name: "{{ odoo_container_name }}"
+    odoo_db_admin_login: "meadmin@example.com"
+    odoo_db_admin_password: "{{ admin_passwd }}"
+    odoo_db_lang: "en_US"
+    odoo_db_country_code: "us"
     # Existing network — must already exist
     docker_network_name: "odoo-network"
     docker_subnet: "172.18.0.0/24"
@@ -78,12 +84,15 @@
     - name: Flush handlers to apply pg_hba.conf changes
       meta: flush_handlers
 
-    - name: Wait for PostgreSQL to be ready
+    # Check the Docker bridge IP, not localhost: that's the address Odoo uses,
+    # and PostgreSQL can be up on localhost while not bound to the bridge.
+    - name: Wait for PostgreSQL on the Docker bridge IP
       wait_for:
         port: 5432
-        host: localhost
+        host: "{{ postgres_host }}"
         delay: 3
         timeout: 30
+        msg: "PostgreSQL is not listening on {{ postgres_host }}:5432. Check listen_addresses in postgresql.conf and that the {{ docker_network_name }} bridge exists, then run: systemctl restart postgresql"
 
     # Step 3: Create directory structure
     - name: Create instance directory structure
@@ -101,13 +110,10 @@
 
     # Step 4: Create Dockerfile and build image
     - name: Create Dockerfile
-      copy:
+      template:
+        src: templates/Dockerfile.j2
         dest: "{{ odoo_user_dir }}/Dockerfile"
-        content: |
-          FROM odoo:{{ odoo_version }}
-          USER root
-          RUN mkdir -p /mnt/custom-addons
-          RUN mkdir -p /mnt/extra-addons
+      register: dockerfile
 
     - name: Check if custom image already exists
       command: docker images {{ odoo_custom_image }} --format "{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}"
@@ -118,54 +124,40 @@
       command: docker build -t {{ odoo_custom_image }} .
       args:
         chdir: "{{ odoo_user_dir }}"
-      when: odoo_custom_image not in image_check.stdout
+      when: odoo_custom_image not in image_check.stdout or dockerfile.changed
+
+    # The container runs as the image's non-root "odoo" user, so the bind-mounted
+    # filestore must be owned by that UID/GID (not root) for Odoo to write to it.
+    - name: Get odoo user UID from the image
+      command: docker run --rm --entrypoint id {{ odoo_custom_image }} -u odoo
+      register: odoo_uid_out
+      changed_when: false
+
+    - name: Get odoo group GID from the image
+      command: docker run --rm --entrypoint id {{ odoo_custom_image }} -g odoo
+      register: odoo_gid_out
+      changed_when: false
+
+    - name: Set ownership of odoo-data to the odoo user
+      file:
+        path: "{{ odoo_user_dir }}/odoo-data"
+        state: directory
+        owner: "{{ odoo_uid_out.stdout | trim }}"
+        group: "{{ odoo_gid_out.stdout | trim }}"
+        mode: 'u=rwX,g=rX,o='
+        recurse: yes
 
     # Step 5: Create docker-compose.yaml
     - name: Create docker-compose.yaml
-      copy:
+      template:
+        src: templates/docker-compose.yaml.j2
         dest: "{{ odoo_user_dir }}/docker-compose.yaml"
-        content: |
-          services:
-            odoo:
-              container_name: {{ odoo_container_name }}
-              build:
-                  context: .
-                  dockerfile: Dockerfile
-              restart: unless-stopped
-              volumes:
-                - ./config:/etc/odoo
-                - ./custom-addons:/mnt/custom-addons
-                - ./extra-addons:/mnt/extra-addons
-                - ./odoo-data:/root/.local/share/Odoo
-              ports:
-                - "127.0.0.1:{{ odoo_port }}:8069"
-                - "127.0.0.1:{{ odoo_gevent_port }}:8072"
-              environment:
-                - HOST={{ postgres_host }}
-                - USER={{ postgres_user }}
-                - PASSWORD={{ postgres_password }}
-              networks:
-                - {{ docker_network_name }}
-
-          networks:
-            {{ docker_network_name }}:
-              external: true
 
     # Step 6: Create odoo.conf
     - name: Create Odoo configuration file
-      copy:
+      template:
+        src: templates/odoo.conf.j2
         dest: "{{ odoo_user_dir }}/config/odoo.conf"
-        content: |
-          [options]
-          admin_passwd = {{ admin_passwd }}
-          addons_path = /mnt/extra-addons,/mnt/custom-addons
-          db_host = {{ postgres_host }}
-          db_port = 5432
-          db_user = {{ postgres_user }}
-          db_password = {{ postgres_password }}
-          xmlrpc_port = 8069
-          proxy_mode = True
-          list_db = False
 
     # Step 7: Start the new Odoo instance
     - name: Stop existing container if running
@@ -182,10 +174,13 @@
     - name: Wait for Odoo to be ready
       wait_for:
         port: "{{ odoo_port }}"
-        host: "{{ ansible_default_ipv4.address }}"
+        host: "127.0.0.1"   # Odoo ports are bound to localhost only
         delay: 30
         timeout: 300
       ignore_errors: yes
+
+    - name: Create the first Odoo database
+      include_tasks: tasks/create-database.yaml
 
     - name: Verify container status
       command: docker ps --filter name={{ odoo_container_name }} --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
@@ -198,7 +193,7 @@
           Odoo {{ odoo_version }} instance is up!
 
           Container: {{ odoo_container_name }}
-          Odoo URL: http://{{ ansible_default_ipv4.address }}:{{ odoo_port }}
+          Odoo URL: http://127.0.0.1:{{ odoo_port }} (server-local only, public access via NPM)
           Database User: {{ postgres_user }}
           Directory: {{ odoo_user_dir }}
 
