@@ -259,6 +259,21 @@
       debug:
         msg: "Odoo network '{{ docker_network_name }}' is ready with subnet {{ docker_subnet }}"
 
+    # PostgreSQL was restarted in Step 4, before the bridge IP (docker_gateway)
+    # existed, so it could only bind localhost. Restart again now that the
+    # bridge is up so it also listens on the gateway IP Odoo connects to.
+    - name: Restart PostgreSQL to bind the Docker bridge IP
+      systemd:
+        name: postgresql
+        state: restarted
+
+    - name: Wait for PostgreSQL on the Docker bridge IP
+      wait_for:
+        port: 5432
+        host: "{{ docker_gateway }}"
+        delay: 2
+        timeout: 60
+
     # Step 7: Setup custom Docker image
     - name: Create Odoo user directory structure
       file:

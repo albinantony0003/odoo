@@ -84,12 +84,15 @@
     - name: Flush handlers to apply pg_hba.conf changes
       meta: flush_handlers
 
-    - name: Wait for PostgreSQL to be ready
+    # Check the Docker bridge IP, not localhost: that's the address Odoo uses,
+    # and PostgreSQL can be up on localhost while not bound to the bridge.
+    - name: Wait for PostgreSQL on the Docker bridge IP
       wait_for:
         port: 5432
-        host: localhost
+        host: "{{ postgres_host }}"
         delay: 3
         timeout: 30
+        msg: "PostgreSQL is not listening on {{ postgres_host }}:5432. Check listen_addresses in postgresql.conf and that the {{ docker_network_name }} bridge exists, then run: systemctl restart postgresql"
 
     # Step 3: Create directory structure
     - name: Create instance directory structure
